@@ -1,20 +1,23 @@
-import {PW,PH,FONT,localToday,wrapText,paginate,cropRect,clampCrop,drawPhoto,renderPage} from './layout.js';
+import {PW,PH,FONT,localToday,wrapTextLayout,paginate,cropRect,clampCrop,drawPhoto,measureStyled,renderPage} from './layout.js';
 const $=id=>document.getElementById(id);
-const date=$('date'),body=$('body'),preview=$('preview'),cropCanvas=$('crop');
+const date=$('date'),dateMemo=$('dateMemo'),body=$('body'),preview=$('preview'),cropCanvas=$('crop'),alignment=$('alignment'),fontFamily=$('fontFamily');
 date.value=localToday();
-let image=null,crop={zoom:1,x:.5,y:.5},pages=[],current=0,ready=false,busy=false,version=0,uploadVersion=0,urls=[],timer;
+const fontStacks={diary:'Diary',sans:'-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif',serif:'"Iowan Old Style","AppleMyungjo","Noto Serif KR","Batang",serif',gulim:'Gulim,"Apple SD Gothic Neo","Noto Sans KR",sans-serif',dotum:'Dotum,"Apple SD Gothic Neo","Noto Sans KR",sans-serif'};
+let image=null,crop={zoom:1,x:.5,y:.5},pages=[],current=0,ready=false,busy=false,version=0,uploadVersion=0,fontVersion=0,customFace=null,customFont=null,urls=[],timer;
 const measureCanvas=document.createElement('canvas'),measure=measureCanvas.getContext('2d');
 function status(message){$('status').textContent=message;}
 function revokeDownloads(){urls.forEach(URL.revokeObjectURL);urls=[];$('downloadLinks').replaceChildren();$('downloads').hidden=true;}
+function typography(){const selected=fontFamily.value;const condensed=['serif','gulim','dotum'].includes(selected);return {bodyFont:customFont&&selected==='custom'?customFont:fontStacks[selected],scaleX:condensed?.95:1,letterSpacing:condensed?-FONT*.03:0,condensed};}
 function update(){
   version++;revokeDownloads();$('count').textContent=`${Array.from(body.value).length.toLocaleString('ko-KR')}자`;
   if(!ready)return;
   if(!date.validity.valid||!date.value){$('save').disabled=true;status('날짜를 선택해주세요.');return;}
-  measure.font=`${FONT}px Diary`;pages=paginate(wrapText(body.value,t=>measure.measureText(t).width),!!image);
+  const type=typography();measure.font=`${FONT}px ${type.bodyFont}`;pages=paginate(wrapTextLayout(body.value,t=>measureStyled(measure,t,type.scaleX,type.letterSpacing)),!!image);
   current=Math.min(current,pages.length-1);showPage();$('save').disabled=busy;
   status(pages.length>1?`총 ${pages.length}장의 일기로 나누었어요.`:'');
 }
-function showPage(){if(!pages.length)return;renderPage(preview,pages[current],current,pages.length,date.value,image,crop);$('pageCount').textContent=`${current+1} / ${pages.length}`;$('prev').disabled=current===0;$('next').disabled=current===pages.length-1;}
+function renderOptions(){return {memo:dateMemo.value,align:alignment.value,...typography()};}
+function showPage(){if(!pages.length)return;renderPage(preview,pages[current],current,pages.length,date.value,image,crop,renderOptions());$('pageCount').textContent=`${current+1} / ${pages.length}`;$('prev').disabled=current===0;$('next').disabled=current===pages.length-1;}
 function paintCrop(){if(!image)return;clampCrop(image,crop);const c=cropCanvas.getContext('2d');c.clearRect(0,0,PW,PH);drawPhoto(c,image,crop);$('zoom').value=crop.zoom;$('zoomValue').textContent=`${Math.round(crop.zoom*100)}%`;}
 function changedCrop(){paintCrop();clearTimeout(timer);timer=setTimeout(update,70);}
 function setZoom(value,anchor={x:PW/2,y:PH/2}){if(!image)return;const old=cropRect(image,crop);const sx=old.sx+anchor.x/PW*old.sw,sy=old.sy+anchor.y/PH*old.sh;crop.zoom=Math.max(1,Math.min(4,value));const next=cropRect(image,crop);crop.x=(sx+(0.5-anchor.x/PW)*next.sw)/image.width;crop.y=(sy+(0.5-anchor.y/PH)*next.sh)/image.height;changedCrop();}
@@ -25,15 +28,16 @@ async function decodePhoto(file){
   const url=URL.createObjectURL(file);try{const img=new Image();img.src=url;await img.decode();return img;}finally{URL.revokeObjectURL(url);}
 }
 $('photo').addEventListener('change',async event=>{
-  const file=event.target.files[0];if(!file)return;const token=++uploadVersion;
+  const file=event.target.files[0];if(!file)return;
   if(file.size>40*1024*1024){status('40MB 이하의 사진을 골라주세요.');event.target.value='';return;}
+  const token=++uploadVersion;let loadError='';
   status('사진을 준비하고 있어요…');busy=true;$('save').disabled=true;
   try{const decoded=await decodePhoto(file);if(token!==uploadVersion){decoded.close?.();return;}
     // Bound retained image memory for large phone photos. Original file is unchanged.
     const ratio=Math.min(1,4096/Math.max(decoded.width,decoded.height));const normalized=document.createElement('canvas');normalized.width=Math.round(decoded.width*ratio);normalized.height=Math.round(decoded.height*ratio);normalized.getContext('2d').drawImage(decoded,0,0,normalized.width,normalized.height);decoded.close?.();image=normalized;
     $('cropPanel').hidden=false;$('remove').hidden=false;$('uploadLabel').querySelector('strong').textContent='다른 사진으로 바꾸기';$('uploadLabel').querySelector('span:last-child').textContent='사진을 다시 선택할 수 있어요';resetCrop();
-  }catch{if(token===uploadVersion)status('이 사진을 열 수 없어요. JPG, PNG 또는 WebP 사진으로 다시 선택해주세요.');}
-  finally{if(token===uploadVersion){busy=false;$('save').disabled=!ready;event.target.value='';if(image)update();}}
+  }catch{loadError='이 사진을 열 수 없어요. JPG, PNG 또는 WebP 사진으로 다시 선택해주세요.';}
+  finally{if(token===uploadVersion){busy=false;$('save').disabled=!ready;event.target.value='';update();if(loadError)status(loadError);}}
 });
 $('remove').onclick=()=>{uploadVersion++;busy=false;image=null;$('cropPanel').hidden=true;$('remove').hidden=true;$('uploadLabel').querySelector('strong').textContent='오늘의 사진을 골라주세요';$('uploadLabel').querySelector('span:last-child').textContent='사진 없이 글만 남겨도 좋아요';update();};
 $('reset').onclick=resetCrop;$('zoom').oninput=e=>setZoom(Number(e.target.value));
@@ -46,15 +50,16 @@ function endPointer(e){pointers.delete(e.pointerId);gesture=snapshot();clearTime
 cropCanvas.onpointerup=endPointer;cropCanvas.onpointercancel=endPointer;cropCanvas.onlostpointercapture=endPointer;
 cropCanvas.addEventListener('wheel',e=>{if(!image)return;e.preventDefault();setZoom(crop.zoom*Math.exp(-e.deltaY*.001),point(e));},{passive:false});
 cropCanvas.onkeydown=e=>{const directions={ArrowLeft:[1,0],ArrowRight:[-1,0],ArrowUp:[0,1],ArrowDown:[0,-1]};if(!image||!directions[e.key])return;e.preventDefault();const [x,y]=directions[e.key];crop.x+=x*.015/crop.zoom;crop.y+=y*.015/crop.zoom;changedCrop();};
-date.oninput=update;body.oninput=()=>{clearTimeout(timer);timer=setTimeout(update,100);};
+date.oninput=update;dateMemo.oninput=update;alignment.onchange=update;fontFamily.onchange=update;body.oninput=()=>{clearTimeout(timer);timer=setTimeout(update,100);};
+$('fontFile').addEventListener('change',async event=>{const file=event.target.files[0];event.target.value='';if(!file)return;const ext=file.name.split('.').pop()?.toLowerCase();if(!['ttf','otf'].includes(ext)){status('TTF 또는 OTF 폰트 파일을 선택해주세요.');return;}if(file.size>30*1024*1024){status('30MB 이하의 폰트 파일을 선택해주세요.');return;}const token=++fontVersion;let fontMessage='';busy=true;$('save').disabled=true;$('fontStatus').textContent='폰트를 불러오는 중…';try{const family=`LocalDiaryFont${token}`;const face=new FontFace(family,await file.arrayBuffer());await face.load();if(token!==fontVersion)return;if(customFace)document.fonts.delete(customFace);document.fonts.add(face);customFace=face;customFont=`"${family}"`;let option=fontFamily.querySelector('option[value="custom"]');if(!option){option=document.createElement('option');option.value='custom';fontFamily.append(option);}option.textContent=`${file.name} (내 폰트)`;fontFamily.value='custom';await document.fonts.ready;$('fontStatus').textContent=`${file.name} · 현재 브라우저에서만 사용`;fontMessage='내 폰트를 적용했어요.';}catch(error){console.error(error);$('fontStatus').textContent='TTF 또는 OTF · 이 브라우저에서만 사용';fontMessage='이 폰트를 불러오지 못했어요. 다른 TTF/OTF 파일을 선택해주세요.';}finally{if(token===fontVersion){busy=false;update();if(fontMessage)status(fontMessage);}}});
 $('prev').onclick=()=>{current--;showPage();};$('next').onclick=()=>{current++;showPage();};
 const toBlob=canvas=>new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG 생성 실패')),'image/png'));
 $('save').onclick=async()=>{
-  clearTimeout(timer);update();if(!ready||!date.validity.valid||busy)return;busy=true;$('save').disabled=true;const generation=version;const source={pages:pages.map(p=>({...p,lines:[...p.lines]})),date:date.value,image,crop:{...crop}};
-  try{await document.fonts.ready;const canvas=document.createElement('canvas');
+  clearTimeout(timer);update();if(!ready||!date.validity.valid||busy)return;busy=true;$('save').disabled=true;const generation=version;const source={pages:pages.map(p=>({...p,lines:p.lines.map(line=>typeof line==='string'?line:{...line})})),date:date.value,image,crop:{...crop},options:{...renderOptions()}};
+  try{if(customFace&&fontFamily.value==='custom')await customFace.loaded;await document.fonts.ready;const canvas=document.createElement('canvas');
     for(let i=0;i<source.pages.length;i++){
       status(`PNG를 만들고 있어요… ${i+1} / ${source.pages.length}`);
-      renderPage(canvas,source.pages[i],i,source.pages.length,source.date,source.image,source.crop);const blob=await toBlob(canvas);
+      renderPage(canvas,source.pages[i],i,source.pages.length,source.date,source.image,source.crop,source.options);const blob=await toBlob(canvas);
       if(version!==generation){status('내용이 바뀌었어요. PNG 저장을 다시 눌러주세요.');revokeDownloads();return;}
       const url=URL.createObjectURL(blob);urls.push(url);const a=document.createElement('a');a.href=url;a.download=`diary_${source.date.replaceAll('-','')}_${i+1}.png`;a.textContent=`${i+1}장 PNG 저장`;a.target='_blank';a.rel='noopener';$('downloadLinks').append(a);
     }
@@ -67,4 +72,4 @@ $('save').onclick=async()=>{
 };
 async function init(){try{const loaded=await document.fonts.load(`${FONT}px Diary`,'오늘의 일기 한글');await document.fonts.ready;if(!loaded.length)throw new Error('font missing');ready=true;update();}catch{status('한글 폰트를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해주세요.');}}
 init();
-window.addEventListener('beforeunload',e=>{if(body.value||image){e.preventDefault();e.returnValue='';}});
+window.addEventListener('beforeunload',e=>{if(body.value||image||customFace){e.preventDefault();e.returnValue='';}});
