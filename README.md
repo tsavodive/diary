@@ -1,0 +1,70 @@
+# 하루 한 장
+
+날짜와 선택한 사진, 오늘의 이야기를 **1080 × 1920 PNG**로 만드는 정적 웹 일기 이미지 생성기입니다. 일기를 보관하는 서비스가 아닙니다.
+
+## 사용법
+
+1. 날짜를 고릅니다. 기기의 로컬 날짜가 기본값입니다.
+2. 필요하면 사진을 선택합니다. 사진 영역에서 드래그하거나 두 손가락으로 확대합니다. 확대 슬라이더, 마우스 휠, 방향키도 지원합니다.
+3. 일기를 작성하고 미리보기를 확인합니다.
+4. **PNG 저장**을 누릅니다. 긴 일기는 페이지별 링크로 한 장씩 저장합니다. 파일명은 `diary_20260921_1.png` 형식입니다.
+
+iPhone에서 파일 다운로드 대신 이미지가 열리면 이미지를 길게 눌러 사진에 저장할 수 있습니다. HEIC는 브라우저의 디코딩 지원 여부에 따라 달라집니다. 열리지 않는 사진은 JPG/PNG/WebP로 선택해주세요.
+
+## 로컬 실행
+
+별도 빌드와 npm 설치가 필요 없습니다. Python 3가 설치된 환경에서 이 폴더 안에서 실행합니다.
+
+```sh
+python -m http.server 4173 --bind 127.0.0.1
+```
+
+브라우저에서 http://127.0.0.1:4173 에 접속합니다. ES 모듈을 사용하므로 HTML 파일을 직접 더블클릭하는 대신 HTTP 서버를 사용하세요.
+
+`assets/Gaegu-Regular.ttf`가 없으면 CSS의 공식 Google Fonts 저장소 URL에서 폰트를 로드합니다. GitHub Actions는 고정된 버전의 폰트를 받아 배포 산출물에 포함합니다. 폰트 로딩 실패 시 PNG 저장을 차단해 다른 폰트로 잘못 저장되는 것을 방지합니다.
+
+## GitHub Pages 배포
+
+목표 저장소: `tsavodive/diary` · 배포 주소: https://tsavodive.github.io/diary/
+
+1. GitHub에서 공개 저장소 `diary`를 만듭니다.
+2. 이 폴더의 **내용 전체**를 저장소 `main` 브랜치에 넣습니다. `.github/workflows/pages.yml`도 포함합니다.
+3. 저장소 **Settings → Pages → Build and deployment → Source**를 **GitHub Actions**로 선택합니다.
+4. Actions의 **Deploy diary to GitHub Pages**가 성공하면 위 주소로 접속합니다. 이후 main에 올린 변경은 자동 배포됩니다.
+
+모든 정적 파일 경로는 상대 경로라서 `/diary/`와 같은 하위 경로에서도 동작합니다. 배포 과정의 폰트 다운로드와 방문자의 일기 처리는 별개이며, 사용자 사진/본문은 배포 과정에 들어가지 않습니다.
+
+## 파일 구조
+
+```text
+index.html                 입력 UI와 미리보기
+style.css                  모바일 우선 스타일과 한글 폰트
+app.js                     업로드, 터치/핀치, 미리보기, PNG 저장
+layout.js                  줄바꿈, 페이지 분할, crop, Canvas 렌더링
+assets/Gaegu-Regular.ttf    한글 손글씨 폰트 (배포 시 포함)
+assets/OFL.txt              폰트 라이선스
+tests/layout.test.js       날짜, 줄바꿈, 페이지 경계, crop 계산 테스트
+.github/workflows/pages.yml GitHub Pages 자동 배포
+.nojekyll                  Jekyll 처리 방지
+```
+
+## 주요 기술 / 라이브러리
+
+외부 JavaScript 라이브러리와 프레임워크는 사용하지 않습니다. Canvas 2D API로 일정한 해상도의 원본 이미지를 그리고, **미리보기에도 동일한 렌더러**를 사용합니다. 따라서 DOM 스크린샷, 화면 배율, CSS 캡처에 의존하지 않습니다.
+
+한글은 [Google Fonts의 Gaegu](https://github.com/google/fonts/tree/main/ofl/gaegu)를 사용합니다(SIL OFL 1.1). `document.fonts.load()`와 `document.fonts.ready` 후에 줄 폭 측정과 렌더링을 진행합니다. 현대 브라우저의 `createImageBitmap(..., {imageOrientation: 'from-image'})`로 EXIF를 반영하고, 실패할 경우 브라우저 이미지 디코더를 사용합니다. 이미 적용된 EXIF를 수동으로 재적용하지 않습니다.
+
+사진 영역은 888 × 600px로 고정합니다. 편집과 출력은 같은 원본 좌표 계산 함수를 사용합니다. 사진은 첫 장에만 들어가며, 사진이 없으면 본문이 날짜 아래에서 시작합니다. 글자는 46px, 행간은 76px로 유지합니다. 한글과 이모지의 문자 단위를 보존하며, 직접 입력한 빈 줄과 줄바꿈을 유지합니다. 매우 큰 사진은 브라우저 메모리를 위해 긴 변 4096px로 내부 정규화합니다. 원본 파일은 변경하지 않습니다.
+
+## 개인정보
+
+- 사진과 본문은 브라우저 메모리에서만 처리하며 외부로 업로드하지 않습니다.
+- 로그인, 서버, DB, 분석 스크립트, localStorage, IndexedDB를 사용하지 않습니다.
+- GitHub Pages가 전달하는 정적 파일을 받을 때의 일반적인 접속 로그는 GitHub의 정책을 따릅니다. 일기 내용은 요청에 포함되지 않습니다.
+- 새로고침/탭 종료 시 작업 내용은 사라집니다. 저장한 PNG는 사용자의 기기에 남습니다.
+
+## 검증
+
+Node.js 20 이상에서 `node --test tests/layout.test.js` 또는 `npm test`로 계산 테스트를 실행할 수 있습니다. 테스트 결과와 브라우저 확인 범위는 `TESTING.md`를 참고하세요.
+
+실제 iPhone Safari / Android Chrome의 사진첩, HEIC 지원, 사진 앱 저장 동작은 해당 기기에서 최종 확인이 필요합니다. 데스크톱의 모바일 화면 크기 검증은 실제 기기 검증을 대체하지 않습니다.
