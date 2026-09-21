@@ -1,6 +1,6 @@
-import {PW,PH,FONT,localToday,wrapTextLayout,paginate,cropRect,clampCrop,drawPhoto,measureStyled,renderPage} from './layout.js';
+import {PW,FONT,localToday,wrapTextLayout,paginate,cropRect,clampCrop,drawPhoto,measureStyled,photoLayout,renderPage} from './layout.js';
 const $=id=>document.getElementById(id);
-const date=$('date'),dateMemo=$('dateMemo'),body=$('body'),preview=$('preview'),cropCanvas=$('crop'),alignment=$('alignment'),fontFamily=$('fontFamily');
+const date=$('date'),dateMemo=$('dateMemo'),body=$('body'),preview=$('preview'),cropCanvas=$('crop'),alignment=$('alignment'),fontFamily=$('fontFamily'),photoFormat=$('photoFormat'),paperColors=[...document.querySelectorAll('input[name="paperColor"]')];
 date.value=localToday();
 const fontStacks={diary:'Diary',sans:'-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif',serif:'"Iowan Old Style","AppleMyungjo","Noto Serif KR","Batang",serif',gulim:'Gulim,"Apple SD Gothic Neo","Noto Sans KR",sans-serif',dotum:'Dotum,"Apple SD Gothic Neo","Noto Sans KR",sans-serif'};
 let image=null,crop={zoom:1,x:.5,y:.5},pages=[],current=0,ready=false,busy=false,version=0,uploadVersion=0,fontVersion=0,customFace=null,customFont=null,urls=[],timer;
@@ -12,16 +12,18 @@ function update(){
   version++;revokeDownloads();$('count').textContent=`${Array.from(body.value).length.toLocaleString('ko-KR')}자`;
   if(!ready)return;
   if(!date.validity.valid||!date.value){$('save').disabled=true;status('날짜를 선택해주세요.');return;}
-  const type=typography();measure.font=`${FONT}px ${type.bodyFont}`;pages=paginate(wrapTextLayout(body.value,t=>measureStyled(measure,t,type.scaleX,type.letterSpacing)),!!image);
+  const type=typography();measure.font=`${FONT}px ${type.bodyFont}`;pages=paginate(wrapTextLayout(body.value,t=>measureStyled(measure,t,type.scaleX,type.letterSpacing)),!!image,photoFormat.value);
   current=Math.min(current,pages.length-1);showPage();$('save').disabled=busy;
   status(pages.length>1?`총 ${pages.length}장의 일기로 나누었어요.`:'');
 }
-function renderOptions(){return {memo:dateMemo.value,align:alignment.value,...typography()};}
+function renderOptions(){return {memo:dateMemo.value,align:alignment.value,photoFormat:photoFormat.value,paperColor:paperColors.find(input=>input.checked)?.value||'#fffefb',...typography()};}
 function showPage(){if(!pages.length)return;renderPage(preview,pages[current],current,pages.length,date.value,image,crop,renderOptions());$('pageCount').textContent=`${current+1} / ${pages.length}`;$('prev').disabled=current===0;$('next').disabled=current===pages.length-1;}
-function paintCrop(){if(!image)return;clampCrop(image,crop);const c=cropCanvas.getContext('2d');c.clearRect(0,0,PW,PH);drawPhoto(c,image,crop);$('zoom').value=crop.zoom;$('zoomValue').textContent=`${Math.round(crop.zoom*100)}%`;}
+function frame(){return photoLayout(photoFormat.value);}
+function paintCrop(){if(!image)return;const {width,height}=frame();if(cropCanvas.width!==width||cropCanvas.height!==height){cropCanvas.width=width;cropCanvas.height=height;}clampCrop(image,crop,width,height);const c=cropCanvas.getContext('2d');c.clearRect(0,0,width,height);drawPhoto(c,image,crop,0,0,width,height);$('zoom').value=crop.zoom;$('zoomValue').textContent=`${Math.round(crop.zoom*100)}%`;}
 function changedCrop(){paintCrop();clearTimeout(timer);timer=setTimeout(update,70);}
-function setZoom(value,anchor={x:PW/2,y:PH/2}){if(!image)return;const old=cropRect(image,crop);const sx=old.sx+anchor.x/PW*old.sw,sy=old.sy+anchor.y/PH*old.sh;crop.zoom=Math.max(1,Math.min(4,value));const next=cropRect(image,crop);crop.x=(sx+(0.5-anchor.x/PW)*next.sw)/image.width;crop.y=(sy+(0.5-anchor.y/PH)*next.sh)/image.height;changedCrop();}
+function setZoom(value,anchor){if(!image)return;const {width,height}=frame();anchor||={x:width/2,y:height/2};const old=cropRect(image,crop,width,height);const sx=old.sx+anchor.x/width*old.sw,sy=old.sy+anchor.y/height*old.sh;crop.zoom=Math.max(1,Math.min(4,value));const next=cropRect(image,crop,width,height);crop.x=(sx+(0.5-anchor.x/width)*next.sw)/image.width;crop.y=(sy+(0.5-anchor.y/height)*next.sh)/image.height;changedCrop();}
 function resetCrop(){crop={zoom:1,x:.5,y:.5};changedCrop();}
+function rotatePhoto(turn){if(!image)return;const rotated=document.createElement('canvas');rotated.width=image.height;rotated.height=image.width;const c=rotated.getContext('2d');c.translate(rotated.width/2,rotated.height/2);c.rotate(turn*Math.PI/2);c.drawImage(image,-image.width/2,-image.height/2);image.width=1;image.height=1;image=rotated;resetCrop();}
 async function decodePhoto(file){
   // Modern browsers apply EXIF once at decode time; never rotate a decoded image again.
   if(window.createImageBitmap){try{return await createImageBitmap(file,{imageOrientation:'from-image'});}catch{}}
@@ -42,15 +44,15 @@ $('photo').addEventListener('change',async event=>{
 $('remove').onclick=()=>{uploadVersion++;busy=false;image=null;$('cropPanel').hidden=true;$('remove').hidden=true;$('uploadLabel').querySelector('strong').textContent='오늘의 사진을 골라주세요';$('uploadLabel').querySelector('span:last-child').textContent='사진 없이 글만 남겨도 좋아요';update();};
 $('reset').onclick=resetCrop;$('zoom').oninput=e=>setZoom(Number(e.target.value));
 const pointers=new Map();let gesture=null;
-function point(e){const r=cropCanvas.getBoundingClientRect();return {x:(e.clientX-r.left)*PW/r.width,y:(e.clientY-r.top)*PH/r.height};}
+function point(e){const r=cropCanvas.getBoundingClientRect();return {x:(e.clientX-r.left)*cropCanvas.width/r.width,y:(e.clientY-r.top)*cropCanvas.height/r.height};}
 function snapshot(){const p=[...pointers.values()];if(!p.length)return null;return {mid:p.length>1?{x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2}:p[0],distance:p.length>1?Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y):0};}
 cropCanvas.onpointerdown=e=>{if(!image)return;cropCanvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,point(e));gesture=snapshot();};
-cropCanvas.onpointermove=e=>{if(!pointers.has(e.pointerId)||!image)return;pointers.set(e.pointerId,point(e));const next=snapshot();if(gesture){if(next.distance&&gesture.distance)setZoom(crop.zoom*next.distance/gesture.distance,gesture.mid);const scale=Math.max(PW/image.width,PH/image.height)*crop.zoom;crop.x-=(next.mid.x-gesture.mid.x)/scale/image.width;crop.y-=(next.mid.y-gesture.mid.y)/scale/image.height;changedCrop();}gesture=next;};
+cropCanvas.onpointermove=e=>{if(!pointers.has(e.pointerId)||!image)return;pointers.set(e.pointerId,point(e));const next=snapshot();if(gesture){if(next.distance&&gesture.distance)setZoom(crop.zoom*next.distance/gesture.distance,gesture.mid);const {width,height}=frame();const scale=Math.max(width/image.width,height/image.height)*crop.zoom;crop.x-=(next.mid.x-gesture.mid.x)/scale/image.width;crop.y-=(next.mid.y-gesture.mid.y)/scale/image.height;changedCrop();}gesture=next;};
 function endPointer(e){pointers.delete(e.pointerId);gesture=snapshot();clearTimeout(timer);update();}
 cropCanvas.onpointerup=endPointer;cropCanvas.onpointercancel=endPointer;cropCanvas.onlostpointercapture=endPointer;
 cropCanvas.addEventListener('wheel',e=>{if(!image)return;e.preventDefault();setZoom(crop.zoom*Math.exp(-e.deltaY*.001),point(e));},{passive:false});
 cropCanvas.onkeydown=e=>{const directions={ArrowLeft:[1,0],ArrowRight:[-1,0],ArrowUp:[0,1],ArrowDown:[0,-1]};if(!image||!directions[e.key])return;e.preventDefault();const [x,y]=directions[e.key];crop.x+=x*.015/crop.zoom;crop.y+=y*.015/crop.zoom;changedCrop();};
-date.oninput=update;dateMemo.oninput=update;alignment.onchange=update;fontFamily.onchange=update;body.oninput=()=>{clearTimeout(timer);timer=setTimeout(update,100);};
+date.oninput=update;dateMemo.oninput=update;alignment.onchange=update;fontFamily.onchange=update;photoFormat.onchange=resetCrop;paperColors.forEach(input=>input.onchange=update);$('rotateLeft').onclick=()=>rotatePhoto(-1);$('rotateRight').onclick=()=>rotatePhoto(1);body.oninput=()=>{clearTimeout(timer);timer=setTimeout(update,100);};
 $('fontFile').addEventListener('change',async event=>{const file=event.target.files[0];event.target.value='';if(!file)return;const ext=file.name.split('.').pop()?.toLowerCase();if(!['ttf','otf'].includes(ext)){status('TTF 또는 OTF 폰트 파일을 선택해주세요.');return;}if(file.size>30*1024*1024){status('30MB 이하의 폰트 파일을 선택해주세요.');return;}const token=++fontVersion;let fontMessage='';busy=true;$('save').disabled=true;$('fontStatus').textContent='폰트를 불러오는 중…';try{const family=`LocalDiaryFont${token}`;const face=new FontFace(family,await file.arrayBuffer());await face.load();if(token!==fontVersion)return;if(customFace)document.fonts.delete(customFace);document.fonts.add(face);customFace=face;customFont=`"${family}"`;let option=fontFamily.querySelector('option[value="custom"]');if(!option){option=document.createElement('option');option.value='custom';fontFamily.append(option);}option.textContent=`${file.name} (내 폰트)`;fontFamily.value='custom';await document.fonts.ready;$('fontStatus').textContent=`${file.name} · 현재 브라우저에서만 사용`;fontMessage='내 폰트를 적용했어요.';}catch(error){console.error(error);$('fontStatus').textContent='TTF 또는 OTF · 이 브라우저에서만 사용';fontMessage='이 폰트를 불러오지 못했어요. 다른 TTF/OTF 파일을 선택해주세요.';}finally{if(token===fontVersion){busy=false;update();if(fontMessage)status(fontMessage);}}});
 $('prev').onclick=()=>{current--;showPage();};$('next').onclick=()=>{current++;showPage();};
 const toBlob=canvas=>new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('PNG 생성 실패')),'image/png'));
